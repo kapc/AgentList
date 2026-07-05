@@ -12,8 +12,11 @@ import (
 
 	"github.com/chandresh/agentlist/internal/agent"
 	"github.com/chandresh/agentlist/internal/auth"
+	"github.com/chandresh/agentlist/internal/calendar"
+	"github.com/chandresh/agentlist/internal/config"
 	"github.com/chandresh/agentlist/internal/connect"
 	"github.com/chandresh/agentlist/internal/store"
+	"github.com/chandresh/agentlist/internal/voice"
 )
 
 type AuthService interface {
@@ -31,14 +34,29 @@ type AuthService interface {
 type Handler struct {
 	auth                AuthService
 	google              *auth.GoogleOAuth
+	calendarOAuth       *calendar.OAuth
+	calendar            *calendar.Service
+	voice               *voice.Service
+	cfg                 config.Config
 	store               *store.Store
 	agent               *agent.Service
 	connect             *connect.Service
 	devExposeVerifyLink bool
 }
 
-func NewHandler(authSvc AuthService, google *auth.GoogleOAuth, st *store.Store, agentSvc *agent.Service, connectSvc *connect.Service, devExposeVerifyLink bool) *Handler {
-	return &Handler{auth: authSvc, google: google, store: st, agent: agentSvc, connect: connectSvc, devExposeVerifyLink: devExposeVerifyLink}
+func NewHandler(authSvc AuthService, google *auth.GoogleOAuth, calendarOAuth *calendar.OAuth, calSvc *calendar.Service, voiceSvc *voice.Service, cfg config.Config, st *store.Store, agentSvc *agent.Service, connectSvc *connect.Service, devExposeVerifyLink bool) *Handler {
+	return &Handler{
+		auth:                authSvc,
+		google:              google,
+		calendarOAuth:       calendarOAuth,
+		calendar:            calSvc,
+		voice:               voiceSvc,
+		cfg:                 cfg,
+		store:               st,
+		agent:               agentSvc,
+		connect:             connectSvc,
+		devExposeVerifyLink: devExposeVerifyLink,
+	}
 }
 
 type signupRequest struct {

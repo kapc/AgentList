@@ -60,3 +60,37 @@ type ChatMessage struct {
 	Content   string
 	CreatedAt time.Time
 }
+
+type AppointmentSlot struct {
+	ID          string
+	AgentID     string
+	StartsAt    time.Time
+	EndsAt      time.Time
+	ServiceType string
+	Status      string
+}
+
+type Appointment struct {
+	ID            string
+	AgentID       string
+	SessionID     string
+	GoogleEventID string
+	StartsAt      time.Time
+	EndsAt        time.Time
+	PatientName   string
+	PatientEmail  string
+	PatientPhone  string
+	ServiceType   string
+	Status        string
+	CreatedAt     time.Time
+}
+
+type GoogleCalendarConnection struct {
+	AgentID      string
+	UserID       string
+	CalendarID   string
+	AccessToken  string
+	RefreshToken string
+	TokenExpiry  time.Time
+	ConnectedAt  time.Time
+}

@@ -22,7 +22,9 @@ var (
 	ErrAgentLinkExpired = errors.New("agent link expired")
 	ErrSessionLimit     = errors.New("session message limit reached")
 	ErrSessionTokenLimit = errors.New("session token limit reached")
-	ErrAgentExists       = errors.New("agent already exists")
+	ErrAgentExists        = errors.New("agent already exists")
+	ErrSlotNotFound       = errors.New("appointment slot not found")
+	ErrSlotUnavailable    = errors.New("appointment slot is not available")
 )
 
 type Store struct {
@@ -126,6 +128,50 @@ CREATE TABLE IF NOT EXISTS connection_requests (
 	decided_at TEXT,
 	expires_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS appointment_slots (
+	id TEXT PRIMARY KEY,
+	agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+	starts_at TEXT NOT NULL,
+	ends_at TEXT NOT NULL,
+	service_type TEXT NOT NULL DEFAULT 'consultation',
+	status TEXT NOT NULL DEFAULT 'available',
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS appointments (
+	id TEXT PRIMARY KEY,
+	agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+	session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+	google_event_id TEXT NOT NULL DEFAULT '',
+	starts_at TEXT NOT NULL,
+	ends_at TEXT NOT NULL,
+	patient_name TEXT NOT NULL,
+	patient_email TEXT NOT NULL DEFAULT '',
+	patient_phone TEXT NOT NULL DEFAULT '',
+	service_type TEXT NOT NULL DEFAULT 'consultation',
+	status TEXT NOT NULL DEFAULT 'confirmed',
+	created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_appointment_slots_agent_starts ON appointment_slots(agent_id, starts_at);
+
+CREATE TABLE IF NOT EXISTS google_calendar_connections (
+	agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	calendar_id TEXT NOT NULL DEFAULT 'primary',
+	access_token TEXT NOT NULL,
+	refresh_token TEXT NOT NULL,
+	token_expiry TEXT NOT NULL,
+	connected_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS voice_call_sessions (
+	call_sid TEXT PRIMARY KEY,
+	agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+	chat_session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+	created_at TEXT NOT NULL
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -168,7 +214,63 @@ func (s *Store) migrateLegacy() error {
 	if err := s.migrateAgentsMultiType(); err != nil {
 		return err
 	}
+	if err := s.migrateAppointments(); err != nil {
+		return err
+	}
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS voice_call_sessions (
+		call_sid TEXT PRIMARY KEY,
+		agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+		chat_session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+		created_at TEXT NOT NULL
+	)`)
 	return s.migrateDocuments()
+}
+
+func (s *Store) migrateAppointments() error {
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS google_calendar_connections (
+		agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		calendar_id TEXT NOT NULL DEFAULT 'primary',
+		access_token TEXT NOT NULL,
+		refresh_token TEXT NOT NULL,
+		token_expiry TEXT NOT NULL,
+		connected_at TEXT NOT NULL
+	)`)
+	if !s.tableExists("appointments") {
+		return nil
+	}
+	if s.columnExists("appointments", "google_event_id") {
+		return nil
+	}
+	_, err := s.db.Exec(`
+PRAGMA foreign_keys=OFF;
+DROP TABLE IF EXISTS appointments;
+CREATE TABLE appointments (
+	id TEXT PRIMARY KEY,
+	agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+	session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+	google_event_id TEXT NOT NULL DEFAULT '',
+	starts_at TEXT NOT NULL,
+	ends_at TEXT NOT NULL,
+	patient_name TEXT NOT NULL,
+	patient_email TEXT NOT NULL DEFAULT '',
+	patient_phone TEXT NOT NULL DEFAULT '',
+	service_type TEXT NOT NULL DEFAULT 'consultation',
+	status TEXT NOT NULL DEFAULT 'confirmed',
+	created_at TEXT NOT NULL
+);
+PRAGMA foreign_keys=ON;
+`)
+	return err
+}
+
+func (s *Store) tableExists(name string) bool {
+	var n int
+	_ = s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`,
+		name,
+	).Scan(&n)
+	return n > 0
 }
 
 // migrateAgentsMultiType rebuilds the agents table when legacy schema still has

@@ -433,6 +433,36 @@ button.secondary:hover, .btn.secondary:hover {
   color: var(--text);
 }
 
+.appointment-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.75rem;
+  align-self: stretch;
+}
+
+.appointment-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--white);
+}
+
+.appointment-card-time {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.appointment-book-btn {
+  flex-shrink: 0;
+  padding: 0.45rem 0.9rem !important;
+  font-size: 0.8125rem !important;
+}
+
 .chat-form {
   display: flex;
   gap: 0.5rem;

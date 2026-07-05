@@ -181,6 +181,8 @@ func (h *Handler) AgentChat(w http.ResponseWriter, r *http.Request) {
 		"tokens_used":      result.TokensUsed,
 		"tokens_remaining": result.TokensRemaining,
 		"token_limit":      result.TokenLimit,
+		"appointments":     result.Appointments,
+		"booked":           result.Booked,
 	})
 }
 

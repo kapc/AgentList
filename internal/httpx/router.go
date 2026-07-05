@@ -38,6 +38,7 @@ func NewRouter(h *Handler, tokens *auth.TokenManager, st *store.Store) http.Hand
 		r.Get("/auth/verify", h.VerifyEmail)
 		r.Get("/auth/google", h.GoogleStart)
 		r.Get("/auth/google/callback", h.GoogleCallback)
+		r.Get("/calendar/google/callback", h.CalendarCallback)
 
 		r.Get("/agent-types", h.ListAgentTypes)
 
@@ -46,6 +47,9 @@ func NewRouter(h *Handler, tokens *auth.TokenManager, st *store.Store) http.Hand
 		r.Get("/public/agents/{slug}/connection-request", h.PublicGetConnectionRequest)
 		r.Post("/public/agents/{slug}/connection-request", h.PublicCreateConnectionRequest)
 		r.Post("/public/agents/{slug}/chat", h.AgentChat)
+
+		r.Post("/voice/agents/{slug}/incoming", h.VoiceIncoming)
+		r.Post("/voice/agents/{slug}/gather", h.VoiceGather)
 
 		r.Group(func(r chi.Router) {
 			r.Use(RequireAuth)
@@ -57,6 +61,10 @@ func NewRouter(h *Handler, tokens *auth.TokenManager, st *store.Store) http.Hand
 			r.Post("/agents/{type}/documents", h.UploadAgentDocument)
 			r.Get("/agents/{type}/documents", h.ListAgentDocuments)
 			r.Post("/agents/{type}/publish", h.PublishMyAgent)
+			r.Get("/agents/{type}/calendar/status", h.CalendarStatus)
+			r.Get("/agents/{type}/calendar/connect", h.CalendarConnect)
+			r.Delete("/agents/{type}/calendar", h.CalendarDisconnect)
+			r.Get("/agents/{type}/voice/config", h.VoiceConfig)
 			r.Post("/agent/publish", h.PublishAgent)
 			r.Post("/resume", h.UploadResume)
 			r.Get("/resume", h.GetResume)

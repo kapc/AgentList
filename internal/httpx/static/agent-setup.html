@@ -65,6 +65,24 @@
         <ul id="documents" class="session-list" style="margin-top: 0.75rem"></ul>
       </div>
 
+      <div id="calendar-panel" class="inner-card" style="margin-top: 1.25rem" hidden>
+        <h3>Google Calendar</h3>
+        <p class="muted small">Connect your Google Calendar so visitors can find open appointment times in chat and book directly onto your calendar.</p>
+        <p id="calendar-status" class="muted">Checking connection…</p>
+        <div class="actions" style="margin-top: 0.75rem; justify-content: flex-start">
+          <a id="calendar-connect" class="btn btn-google" href="#" hidden>Connect Google Calendar</a>
+          <button id="calendar-disconnect" type="button" class="secondary" hidden>Disconnect</button>
+        </div>
+      </div>
+
+      <div id="voice-panel" class="inner-card" style="margin-top: 1.25rem" hidden>
+        <h3>Phone agent</h3>
+        <p class="muted small">Let patients call a phone number and talk to your agent by voice. Uses the same AI as chat — including appointment booking.</p>
+        <p id="voice-status" class="muted">Loading…</p>
+        <p id="voice-webhook" class="mono small" hidden></p>
+        <p id="voice-hint" class="muted small" hidden></p>
+      </div>
+
       <div class="inner-card" style="margin-top: 1.25rem">
         <h3>Shareable agent link</h3>
         <p id="publish-hint" class="muted small" hidden></p>
@@ -332,6 +350,66 @@
       }
     }
 
+    async function loadCalendarStatus() {
+      if (agentType !== 'doctor' && agentType !== 'gardener') return;
+      document.getElementById('calendar-panel').hidden = false;
+      const status = document.getElementById('calendar-status');
+      const connect = document.getElementById('calendar-connect');
+      const disconnect = document.getElementById('calendar-disconnect');
+      const res = await api('/api/v1/agents/' + agentType + '/calendar/status');
+      if (!res.ok) {
+        status.textContent = 'Could not load calendar status.';
+        return;
+      }
+      if (res.body.connected) {
+        if (res.body.healthy === false) {
+          status.textContent = res.body.message || 'Calendar connected but missing permissions — disconnect and reconnect Google Calendar.';
+          status.className = 'msg error';
+          connect.hidden = false;
+          connect.textContent = 'Reconnect Google Calendar';
+          connect.href = '/api/v1/agents/' + agentType + '/calendar/connect';
+          disconnect.hidden = false;
+        } else {
+          status.textContent = 'Connected to Google Calendar (' + (res.body.calendar_id || 'primary') + '). Appointments booked in chat appear on your calendar.';
+          status.className = 'muted';
+          connect.hidden = true;
+          disconnect.hidden = false;
+        }
+      } else {
+        status.textContent = 'Not connected — visitors cannot book appointments until you connect your calendar.';
+        connect.hidden = false;
+        connect.href = '/api/v1/agents/' + agentType + '/calendar/connect';
+        disconnect.hidden = true;
+      }
+    }
+
+    async function loadVoiceConfig() {
+      if (agentType !== 'doctor' && agentType !== 'gardener') return;
+      document.getElementById('voice-panel').hidden = false;
+      const status = document.getElementById('voice-status');
+      const webhook = document.getElementById('voice-webhook');
+      const hint = document.getElementById('voice-hint');
+      const res = await api('/api/v1/agents/' + agentType + '/voice/config');
+      if (!res.ok) {
+        status.textContent = 'Could not load phone agent settings.';
+        return;
+      }
+      if (!res.body.enabled) {
+        status.textContent = 'Phone agents are off on this server. Add TWILIO_AUTH_TOKEN to .env and restart.';
+        return;
+      }
+      if (!res.body.published || !res.body.webhook_url) {
+        status.textContent = 'Publish your agent first, then return here for the Twilio webhook URL.';
+        return;
+      }
+      status.textContent = 'Ready — configure Twilio with the webhook below.';
+      webhook.hidden = false;
+      webhook.textContent = res.body.webhook_url;
+      hint.hidden = false;
+      hint.textContent = (res.body.message || '') +
+        (res.body.token_expires_at ? ' Link token expires ' + new Date(res.body.token_expires_at).toLocaleString() + ' — regenerate agent link to refresh.' : '');
+    }
+
     async function loadPage() {
       const types = await api('/api/v1/agent-types');
       const info = (types.body.types || []).find(t => t.id === agentType);
@@ -368,6 +446,13 @@
       await loadDocuments();
 
       updatePublishState(user, agent);
+      await loadCalendarStatus();
+      await loadVoiceConfig();
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('calendar') === 'connected') {
+        flashMsg('ok', 'Google Calendar connected — visitors can now book appointments in chat.');
+        window.history.replaceState({}, '', window.location.pathname);
+      }
     }
 
     document.getElementById('primary-doc-form').addEventListener('submit', async (e) => {
@@ -421,6 +506,19 @@
     });
 
     document.getElementById('publish').addEventListener('click', tryPublish);
+
+    document.getElementById('calendar-disconnect').addEventListener('click', async () => {
+      const btn = document.getElementById('calendar-disconnect');
+      setLoading(btn, true, 'Disconnecting…');
+      try {
+        const res = await api('/api/v1/agents/' + agentType + '/calendar', { method: 'DELETE' });
+        if (!res.ok) { flashMsg('error', res.body.error || 'Disconnect failed'); return; }
+        flashMsg('ok', 'Google Calendar disconnected.');
+        await loadCalendarStatus();
+      } finally {
+        setLoading(btn, false);
+      }
+    });
 
     loadPage();
   </script>

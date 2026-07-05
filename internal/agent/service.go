@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/chandresh/agentlist/internal/appointments"
 	"github.com/chandresh/agentlist/internal/config"
 	"github.com/chandresh/agentlist/internal/store"
 )
@@ -27,15 +28,17 @@ var (
 )
 
 type Service struct {
-	store  *store.Store
-	cfg    config.Config
-	client *http.Client
+	store        *store.Store
+	cfg          config.Config
+	client       *http.Client
+	appointments *appointments.Service
 }
 
-func NewService(st *store.Store, cfg config.Config) *Service {
+func NewService(st *store.Store, cfg config.Config, apptSvc *appointments.Service) *Service {
 	return &Service{
-		store: st,
-		cfg:   cfg,
+		store:        st,
+		cfg:          cfg,
+		appointments: apptSvc,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -55,6 +58,8 @@ type ChatResult struct {
 	TokensUsed      int
 	TokensRemaining int
 	TokenLimit      int
+	Appointments    []AppointmentView
+	Booked          *BookedAppointmentView
 }
 
 func (s *Service) OpenAIAPIKey() string {
@@ -101,7 +106,8 @@ func (s *Service) Chat(ctx context.Context, in ChatInput) (ChatResult, error) {
 		return ChatResult{}, err
 	}
 
-	reply, callTokens, err := s.generateReply(ctx, agent.Type, experience, history, message)
+	extras := &chatExtras{}
+	reply, callTokens, err := s.generateReplyWithTools(ctx, agent.ID, agent.Type, sessionID, experience, history, message, extras)
 	if err != nil {
 		return ChatResult{}, err
 	}
@@ -126,6 +132,8 @@ func (s *Service) Chat(ctx context.Context, in ChatInput) (ChatResult, error) {
 		TokensUsed:      totalUsed,
 		TokensRemaining: remaining,
 		TokenLimit:      s.cfg.SessionTokenLimit,
+		Appointments:    toAppointmentViews(extras.appointments),
+		Booked:          toBookedView(extras.booked, extras.bookedSlot),
 	}, nil
 }
 
@@ -154,16 +162,16 @@ func (s *Service) generateReply(ctx context.Context, agentType, experience strin
 	}
 
 	msgs := []openAIMessage{
-		{Role: "system", Content: systemPrompt(agentType, experience)},
+		{Role: "system", Content: strPtr(systemPrompt(agentType, experience))},
 	}
 	for _, m := range history {
 		role := m.Role
 		if role != "user" && role != "assistant" {
 			continue
 		}
-		msgs = append(msgs, openAIMessage{Role: role, Content: m.Content})
+		msgs = append(msgs, openAIMessage{Role: role, Content: strPtr(m.Content)})
 	}
-	msgs = append(msgs, openAIMessage{Role: "user", Content: latest})
+	msgs = append(msgs, openAIMessage{Role: "user", Content: strPtr(latest)})
 
 	body, err := json.Marshal(openAIRequest{
 		Model:       s.cfg.OpenAIModel,
@@ -175,42 +183,50 @@ func (s *Service) generateReply(ctx context.Context, agentType, experience strin
 		return "", 0, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	parsed, tokens, err := s.callOpenAI(ctx, body)
 	if err != nil {
 		return "", 0, err
+	}
+	if len(parsed.Choices) == 0 || strings.TrimSpace(contentString(parsed.Choices[0].Message.Content)) == "" {
+		return "", 0, errors.New("empty model response")
+	}
+	return strings.TrimSpace(contentString(parsed.Choices[0].Message.Content)), tokens, nil
+}
+
+func (s *Service) callOpenAI(ctx context.Context, body []byte) (openAIResponse, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return openAIResponse{}, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.cfg.OpenAIAPIKey)
 
 	res, err := s.client.Do(req)
 	if err != nil {
-		return "", 0, err
+		return openAIResponse{}, 0, err
 	}
 	defer res.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
-		return "", 0, err
+		return openAIResponse{}, 0, err
 	}
 	if res.StatusCode != http.StatusOK {
 		if apiErr := parseOpenAIError(respBody); apiErr != nil {
-			return "", 0, apiErr
+			return openAIResponse{}, 0, apiErr
 		}
-		return "", 0, fmt.Errorf("openai api %d: %s", res.StatusCode, truncate(string(respBody), 300))
+		return openAIResponse{}, 0, fmt.Errorf("openai api %d: %s", res.StatusCode, truncate(string(respBody), 300))
 	}
 
 	var parsed openAIResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", 0, err
-	}
-	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
-		return "", 0, errors.New("empty model response")
+		return openAIResponse{}, 0, err
 	}
 	tokens := parsed.Usage.TotalTokens
 	if tokens == 0 {
 		tokens = parsed.Usage.PromptTokens + parsed.Usage.CompletionTokens
 	}
-	return strings.TrimSpace(parsed.Choices[0].Message.Content), tokens, nil
+	return parsed, tokens, nil
 }
 
 func (s *Service) SummarizeSession(ctx context.Context, history []store.ChatMessage) (string, error) {
@@ -227,10 +243,10 @@ func (s *Service) SummarizeSession(ctx context.Context, history []store.ChatMess
 	}
 
 	msgs := []openAIMessage{
-		{Role: "system", Content: `You summarize recruiter screening chats for a job candidate.
+		{Role: "system", Content: strPtr(`You summarize recruiter screening chats for a job candidate.
 Write 3-5 concise bullet points covering: topics discussed, candidate strengths surfaced, recruiter interest signals, and any open questions.
-Do NOT include candidate identity or contact details. Be factual and neutral.`},
-		{Role: "user", Content: "Screening transcript:\n" + transcript.String()},
+Do NOT include candidate identity or contact details. Be factual and neutral.`)},
+		{Role: "user", Content: strPtr("Screening transcript:\n" + transcript.String())},
 	}
 
 	body, err := json.Marshal(openAIRequest{
@@ -271,10 +287,37 @@ Do NOT include candidate identity or contact details. Be factual and neutral.`},
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return "", err
 	}
-	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+	if len(parsed.Choices) == 0 || strings.TrimSpace(contentString(parsed.Choices[0].Message.Content)) == "" {
 		return "", errors.New("empty model response")
 	}
-	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
+	return strings.TrimSpace(contentString(parsed.Choices[0].Message.Content)), nil
+}
+
+func schedulingPrompt(agentType string) string {
+	switch agentType {
+	case "doctor":
+		return `
+
+APPOINTMENT BOOKING:
+- When asked about availability or booking, call search_appointment_slots (default 5 earliest).
+- Present slot times from tool results only — never invent times.
+- To book, collect the patient's name and email, then call book_appointment_slot with the slot_id.
+- If calendar_not_connected, tell the visitor online booking is not set up yet.
+- If calendar_scope_missing, tell the visitor booking is temporarily unavailable and the practice needs to reconnect Google Calendar.
+- Never invent phone numbers or appointment times.`
+	case "gardener":
+		return `
+
+SCHEDULING:
+- When asked about visit availability or booking, call search_appointment_slots (default 5 earliest).
+- Present slot times from tool results only — never invent times.
+- To book, collect the client's name and email, then call book_appointment_slot with the slot_id.
+- If calendar is not connected, tell the visitor online scheduling is not set up yet.
+- If calendar_scope_missing, tell the visitor booking is temporarily unavailable.
+- Never invent phone numbers or appointment times.`
+	default:
+		return ""
+	}
 }
 
 func systemPrompt(agentType, context string) string {
@@ -292,7 +335,7 @@ STRICT RULES:
 - Decline unrelated questions politely.
 
 PROFILE:
-` + context
+` + context + schedulingPrompt("gardener")
 	case "recruiter":
 		return `You are a hiring agent representing a company on AgentList.
 
@@ -319,7 +362,7 @@ STRICT RULES:
 - Do not invent services, fees, or insurance acceptance not listed in the profile.
 
 PRACTICE PROFILE:
-` + context
+` + context + schedulingPrompt("doctor")
 	default:
 		return `You are a screening agent representing a job applicant on AgentList.
 
@@ -337,29 +380,6 @@ STRICT RULES:
 EXPERIENCE CONTEXT:
 ` + context
 	}
-}
-
-type openAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type openAIRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openAIMessage `json:"messages"`
-	Temperature float64         `json:"temperature"`
-	MaxTokens   int             `json:"max_tokens"`
-}
-
-type openAIResponse struct {
-	Choices []struct {
-		Message openAIMessage `json:"message"`
-	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	} `json:"usage"`
 }
 
 func truncate(s string, n int) string {

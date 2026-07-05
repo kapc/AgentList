@@ -181,6 +181,33 @@
       el.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
 
+    function renderAppointmentSlots(slots) {
+      const wrap = document.createElement('div');
+      wrap.className = 'appointment-slots';
+      for (const slot of slots) {
+        const card = document.createElement('div');
+        card.className = 'appointment-card';
+        card.innerHTML = `
+          <div class="appointment-card-time">${slot.label || slot.starts_at}</div>
+          <button type="button" class="secondary appointment-book-btn">Book</button>
+        `;
+        const btn = card.querySelector('.appointment-book-btn');
+        btn.addEventListener('click', () => bookSlot(slot));
+        wrap.appendChild(card);
+      }
+      document.getElementById('chat').appendChild(wrap);
+      wrap.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    async function bookSlot(slot) {
+      const name = prompt('Your full name (required):');
+      if (!name || !name.trim()) return;
+      const email = prompt('Your email (for calendar invite):') || '';
+      const text = 'Book appointment ' + (slot.label || slot.id) + ' for ' + name.trim() + (email.trim() ? ' (' + email.trim() + ')' : '');
+      document.getElementById('message').value = text;
+      document.getElementById('chat-form').requestSubmit();
+    }
+
     function renderConnection(req) {
       const panel = document.getElementById('connection-panel');
       const form = document.getElementById('connection-form');
@@ -305,6 +332,13 @@
       sessionId = res.body.session_id;
       sessionStorage.setItem('agentlist_session_' + slug, sessionId);
       appendMessage('assistant', res.body.reply);
+
+      if (res.body.appointments && res.body.appointments.length) {
+        renderAppointmentSlots(res.body.appointments);
+      }
+      if (res.body.booked) {
+        appendMessage('assistant', 'Booked: ' + res.body.booked.label + ' for ' + res.body.booked.patient_name + '.');
+      }
 
       if (typeof res.body.token_limit === 'number') tokenLimit = res.body.token_limit;
       updateTokenMeter(res.body.tokens_used, tokenLimit, res.body.tokens_remaining);

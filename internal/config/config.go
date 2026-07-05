@@ -16,14 +16,21 @@ type Config struct {
 	BaseURL             string
 	MinPasswordLength   int
 	DevExposeVerifyLink bool
-	GoogleClientID      string
-	GoogleClientSecret  string
-	GoogleRedirectURI   string
+	GoogleClientID            string
+	GoogleClientSecret        string
+	GoogleRedirectURI         string
+	GoogleCalendarRedirectURI string
 	OpenAIAPIKey        string
 	OpenAIModel          string
 	SessionTokenLimit    int
 	ConnectionRequestTTL time.Duration
 	ResumeStorageDir     string
+	TwilioAuthToken      string
+	TwilioSkipSignature  bool
+}
+
+func (c Config) TwilioVoiceEnabled() bool {
+	return c.TwilioAuthToken != ""
 }
 
 func (c Config) GoogleOAuthEnabled() bool {
@@ -32,6 +39,8 @@ func (c Config) GoogleOAuthEnabled() bool {
 
 func Load() Config {
 	loadDotEnv(".env")
+	loadDotEnv("../.env")
+	loadDotEnv("../../.env")
 
 	sessionHours := envInt("SESSION_TTL_HOURS", 168)
 	verifyHours := envInt("VERIFY_TOKEN_TTL_HOURS", 48)
@@ -48,14 +57,17 @@ func Load() Config {
 		BaseURL:             env("BASE_URL", "http://localhost:3000"),
 		MinPasswordLength:   envInt("MIN_PASSWORD_LENGTH", 8),
 		DevExposeVerifyLink: env("DEV_EXPOSE_VERIFY_LINK", "true") == "true",
-		GoogleClientID:      env("GOOGLE_CLIENT_ID", ""),
-		GoogleClientSecret:  env("GOOGLE_CLIENT_SECRET", ""),
-		GoogleRedirectURI:   env("GOOGLE_REDIRECT_URI", ""),
+		GoogleClientID:            env("GOOGLE_CLIENT_ID", ""),
+		GoogleClientSecret:        env("GOOGLE_CLIENT_SECRET", ""),
+		GoogleRedirectURI:         env("GOOGLE_REDIRECT_URI", ""),
+		GoogleCalendarRedirectURI: env("GOOGLE_CALENDAR_REDIRECT_URI", ""),
 		OpenAIAPIKey:        env("OPENAI_API_KEY", ""),
 		OpenAIModel:         env("OPENAI_MODEL", "gpt-4o-mini"),
 		SessionTokenLimit:     envInt("SESSION_TOKEN_LIMIT", 20000),
 		ConnectionRequestTTL:  time.Duration(connectionDays) * 24 * time.Hour,
 		ResumeStorageDir:      env("RESUME_STORAGE_DIR", "./data/resumes"),
+		TwilioAuthToken:       env("TWILIO_AUTH_TOKEN", ""),
+		TwilioSkipSignature:   env("TWILIO_SKIP_SIGNATURE", "false") == "true",
 	}
 }
 
