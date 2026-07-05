@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign up — AgentList</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="auth-page">
+  <nav class="topnav">
+    <a class="brand" href="/">AgentList</a>
+    <div class="nav-links"><a href="/login">Log in</a></div>
+  </nav>
+
+  <main class="auth-center">
+    <section class="auth-card">
+      <div class="auth-card-header">
+        <h1>Create account</h1>
+        <p class="subtitle">Start building your screening agent</p>
+      </div>
+      <div class="auth-card-body">
+        <button type="button" id="google-btn" class="btn-google full" hidden>Continue with Google</button>
+        <p id="google-hint" class="muted small" hidden></p>
+        <div id="google-divider" class="divider" hidden>or</div>
+
+        <form id="signup-form" class="grid">
+          <div>
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@company.com" />
+          </div>
+          <div>
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" required minlength="8" autocomplete="new-password" placeholder="Min. 8 characters" />
+          </div>
+          <button type="submit" class="full">Create account</button>
+        </form>
+
+        <p class="auth-footer">Already have an account? <a href="/login">Log in</a></p>
+        <div id="msg" class="msg" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    setupGoogleAuth('google-btn', 'Sign up with Google').then(() => {
+      const btn = document.getElementById('google-btn');
+      const divider = document.getElementById('google-divider');
+      if (btn && !btn.hidden && divider) divider.hidden = false;
+    });
+    bindForm('signup-form', async (data) => {
+      const res = await api('/api/v1/auth/signup', { method: 'POST', body: JSON.stringify(data) });
+      if (res.ok) {
+        window.location.href = '/dashboard';
+        return;
+      }
+      showMsg('msg', 'error', res.body.error || 'Signup failed');
+    });
+  </script>
+</body>
+</html>

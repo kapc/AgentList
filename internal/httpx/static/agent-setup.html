@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent setup — AgentList</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="page">
+  <div class="dashboard-wrap">
+    <nav class="topnav">
+      <a class="brand" href="/">AgentList</a>
+      <a href="/dashboard" class="secondary btn">← All agents</a>
+    </nav>
+
+    <section class="card">
+      <h1 id="page-title">Agent setup</h1>
+      <p id="page-desc" class="muted"></p>
+      <div id="msg" class="msg" hidden></div>
+
+      <div id="jobseeker-panel" hidden>
+        <div class="inner-card">
+          <h3>Resume</h3>
+          <p id="resume-status" class="muted">No resume uploaded yet.</p>
+          <form id="resume-form" style="margin-top: 0.75rem">
+            <label for="resume">Upload résumé (.pdf, .doc, .docx, .jpg, .png, .txt, .md)</label>
+            <input id="resume" name="resume" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt,.md,application/pdf,image/jpeg,image/png" required />
+            <button type="submit" style="margin-top: 0.75rem">Upload resume</button>
+          </form>
+          <p id="resume-preview" class="mono muted small" hidden></p>
+        </div>
+      </div>
+
+      <div id="primary-doc-panel" hidden>
+        <div class="inner-card">
+          <h3 id="primary-doc-title">Context document</h3>
+          <p id="primary-doc-desc" class="muted small"></p>
+          <p id="primary-doc-status" class="muted">No document uploaded yet.</p>
+          <form id="primary-doc-form" style="margin-top: 0.75rem">
+            <label for="primary-doc">Upload document (.pdf, .doc, .docx, .jpg, .png, .txt, .md)</label>
+            <input id="primary-doc" name="document" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt,.md,application/pdf,image/jpeg,image/png" required />
+            <button type="submit" style="margin-top: 0.75rem">Upload document</button>
+          </form>
+          <p id="primary-doc-preview" class="mono muted small" hidden></p>
+        </div>
+      </div>
+
+      <div id="profile-panel" hidden>
+        <p class="muted small">Optional — or fill in manually if you prefer not to upload a document.</p>
+        <form id="profile-form" class="grid"></form>
+        <button id="save-profile" type="button" style="margin-top: 0.75rem">Save profile</button>
+      </div>
+
+      <div id="extra-documents-panel" class="inner-card" style="margin-top: 1.25rem" hidden>
+        <h3>Additional documents</h3>
+        <p class="muted small">Add more brochures, credentials, or scanned pages. Text is merged into your agent's context.</p>
+        <form id="document-form" style="margin-top: 0.75rem">
+          <label for="document">Add another document</label>
+          <input id="document" name="document" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt,.md,application/pdf,image/jpeg,image/png" />
+          <button type="submit" style="margin-top: 0.75rem">Upload document</button>
+        </form>
+        <ul id="documents" class="session-list" style="margin-top: 0.75rem"></ul>
+      </div>
+
+      <div class="inner-card" style="margin-top: 1.25rem">
+        <h3>Shareable agent link</h3>
+        <p id="publish-hint" class="muted small" hidden></p>
+        <p>Slug: <span id="slug" class="mono">—</span></p>
+        <p>Link: <a id="link" class="mono" href="#">not generated</a></p>
+        <p id="link-expiry" class="muted small" hidden></p>
+        <button id="publish" type="button" style="margin-top: 0.75rem">Generate agent link</button>
+      </div>
+
+      <div id="jobseeker-extras" hidden>
+        <div class="inner-card" style="margin-top: 1.25rem">
+          <h3>Intro requests <span id="approvals-count" class="badge warn" hidden>0</span></h3>
+          <p id="approvals-empty" class="muted">No pending intro requests.</p>
+          <ul id="approvals" class="approval-list" hidden></ul>
+        </div>
+        <div class="inner-card" style="margin-top: 1.25rem">
+          <h3>Visitor sessions</h3>
+          <p id="sessions-empty" class="muted">No sessions yet.</p>
+          <ul id="sessions" class="session-list" hidden></ul>
+        </div>
+      </div>
+
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const agentType = window.location.pathname.replace(/^\/agents\//, '').replace(/\/$/, '');
+    let hasResume = false;
+
+    function flashMsg(kind, text) {
+      showMsg('msg', kind, text);
+      document.getElementById('msg').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function setLoading(btn, loading, label) {
+      if (!btn) return;
+      if (loading) {
+        btn.dataset.prevLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = label || 'Working…';
+      } else {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.prevLabel || btn.textContent;
+      }
+    }
+
+    async function loadDocuments() {
+      const res = await api('/api/v1/agents/' + agentType + '/documents');
+      if (!res.ok) return;
+      const list = document.getElementById('documents');
+      list.innerHTML = '';
+      for (const d of res.body.documents || []) {
+        const li = document.createElement('li');
+        li.className = 'muted small';
+        li.textContent = d.filename + ' · ' + new Date(d.uploaded_at).toLocaleString();
+        list.appendChild(li);
+      }
+    }
+
+    async function uploadDocument(file, submitBtn, successMsg) {
+      setLoading(submitBtn, true, 'Uploading…');
+      try {
+        const ensured = await ensureAgent();
+        if (!ensured.ok) {
+          flashMsg('error', ensured.body.error || 'Create the agent first');
+          return false;
+        }
+        const fd = new FormData();
+        fd.append('document', file);
+        const res = await fetch('/api/v1/agents/' + agentType + '/documents', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          flashMsg('error', body.error || 'Upload failed');
+          return false;
+        }
+        flashMsg('ok', successMsg || 'Document uploaded — you can now generate an agent link.');
+        const me = await api('/api/v1/me');
+        const agentRes = await api('/api/v1/agents/' + agentType);
+        if (agentRes.ok && me.ok) {
+          renderAgent(agentRes.body.agent);
+          renderDocumentStatus(agentRes.body.agent);
+          updatePublishState(me.body.user, { ...agentRes.body.agent, profile_complete: body.profile_complete ?? agentRes.body.agent.profile_complete });
+        } else {
+          await loadPage();
+        }
+        await loadDocuments();
+        return true;
+      } finally {
+        setLoading(submitBtn, false);
+      }
+    }
+
+    function renderDocumentStatus(agent) {
+      if (agentType === 'jobseeker') return;
+      const status = document.getElementById('primary-doc-status');
+      const preview = document.getElementById('primary-doc-preview');
+      if (agent.has_documents && agent.latest_document) {
+        status.textContent = 'Uploaded: ' + (agent.latest_document.filename || 'document');
+        if (agent.latest_document.preview) {
+          preview.hidden = false;
+          preview.textContent = agent.latest_document.preview;
+        }
+        document.getElementById('extra-documents-panel').hidden = false;
+      } else {
+        status.textContent = 'No document uploaded yet.';
+        preview.hidden = true;
+      }
+      if (agent.upload_title) document.getElementById('primary-doc-title').textContent = agent.upload_title;
+      if (agent.upload_description) document.getElementById('primary-doc-desc').textContent = agent.upload_description;
+    }
+
+    async function ensureAgent() {
+      let res = await api('/api/v1/agents/' + agentType);
+      if (res.status === 404) {
+        res = await api('/api/v1/agents/' + agentType, { method: 'POST' });
+      }
+      return res;
+    }
+
+    function renderProfile(fields, profile) {
+      const form = document.getElementById('profile-form');
+      form.innerHTML = '';
+      for (const f of fields) {
+        const wrap = document.createElement('div');
+        const label = document.createElement('label');
+        label.textContent = f.label + (f.required ? ' *' : '');
+        label.setAttribute('for', 'field-' + f.key);
+        let input;
+        if (f.multiline) {
+          input = document.createElement('textarea');
+          input.rows = 3;
+        } else {
+          input = document.createElement('input');
+          input.type = 'text';
+        }
+        input.id = 'field-' + f.key;
+        input.name = f.key;
+        input.placeholder = f.placeholder || '';
+        input.value = (profile && profile[f.key]) || '';
+        wrap.appendChild(label);
+        wrap.appendChild(input);
+        form.appendChild(wrap);
+      }
+    }
+
+    function renderAgent(agent) {
+      document.getElementById('slug').textContent = agent.slug || '—';
+      const linkEl = document.getElementById('link');
+      const expiryEl = document.getElementById('link-expiry');
+      if (agent.link) {
+        linkEl.textContent = agent.link;
+        linkEl.href = agent.link;
+        if (agent.link_expires_at) {
+          expiryEl.hidden = false;
+          expiryEl.textContent = 'Expires: ' + new Date(agent.link_expires_at).toLocaleString();
+        }
+      } else {
+        linkEl.textContent = agent.published ? 'expired — generate a new link' : 'not generated';
+        linkEl.removeAttribute('href');
+        expiryEl.hidden = true;
+      }
+      document.getElementById('publish').textContent = agent.published ? 'Generate new link' : 'Generate agent link';
+    }
+
+    async function loadApprovals() {
+      if (agentType !== 'jobseeker') return;
+      const res = await api('/api/v1/connection-requests?pending=true');
+      if (!res.ok) return;
+      const list = document.getElementById('approvals');
+      const empty = document.getElementById('approvals-empty');
+      const count = document.getElementById('approvals-count');
+      const reqs = res.body.connection_requests || [];
+      if (reqs.length === 0) { list.hidden = true; empty.hidden = false; count.hidden = true; return; }
+      empty.hidden = true; list.hidden = false; count.hidden = false;
+      count.textContent = String(reqs.length);
+      list.innerHTML = '';
+      for (const req of reqs) {
+        const li = document.createElement('li');
+        li.className = 'approval-item';
+        li.innerHTML = `<strong>${req.recruiter_company || 'Company'}</strong>
+          <p class="mono small approval-summary">${(req.screening_summary || '').replace(/</g, '&lt;')}</p>
+          <div class="approval-actions">
+            <button type="button" class="ok-btn" data-action="approve" data-id="${req.id}">Approve (+1)</button>
+            <button type="button" class="secondary" data-action="decline" data-id="${req.id}">Decline</button>
+          </div>`;
+        list.appendChild(li);
+      }
+      list.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const r = await api('/api/v1/connection-requests/' + btn.dataset.id + '/' + btn.dataset.action, { method: 'POST' });
+          if (!r.ok) { showMsg('msg', 'error', r.body.error || 'Failed'); return; }
+          showMsg('msg', 'ok', r.body.message || 'Done');
+          await loadApprovals();
+        });
+      });
+    }
+
+    async function loadSessions() {
+      if (agentType !== 'jobseeker') return;
+      const res = await api('/api/v1/sessions');
+      if (!res.ok) return;
+      const list = document.getElementById('sessions');
+      const empty = document.getElementById('sessions-empty');
+      if (!res.body.sessions || res.body.sessions.length === 0) {
+        list.hidden = true; empty.hidden = false; return;
+      }
+      empty.hidden = true; list.hidden = false; list.innerHTML = '';
+      const limit = res.body.token_limit || 0;
+      for (const s of res.body.sessions) {
+        const li = document.createElement('li');
+        li.innerHTML = `<button type="button" class="linkish" data-id="${s.id}">${new Date(s.created_at).toLocaleString()} · ${(s.tokens_used||0).toLocaleString()} / ${limit.toLocaleString()} tokens</button>`;
+        list.appendChild(li);
+      }
+    }
+
+    function updatePublishState(user, agent) {
+      const btn = document.getElementById('publish');
+      const hint = document.getElementById('publish-hint');
+      btn.disabled = false;
+      hint.className = 'muted small';
+      if (!user.email_verified) {
+        hint.hidden = false;
+        hint.textContent = 'Verify your email before publishing. Check your inbox for the verification link.';
+        return;
+      }
+      if (!agent.profile_complete) {
+        hint.hidden = false;
+        hint.textContent = agentType === 'jobseeker'
+          ? 'Upload a resume or supporting document first, then click Generate agent link.'
+          : 'Upload a PDF/document or fill in required profile fields first, then click Generate agent link.';
+        return;
+      }
+      hint.hidden = false;
+      hint.textContent = 'Ready — click Generate agent link below.';
+      hint.className = 'muted small ok-hint';
+    }
+
+    async function tryPublish() {
+      const btn = document.getElementById('publish');
+      const me = await api('/api/v1/me');
+      if (!me.ok) { flashMsg('error', 'Not logged in'); return; }
+      const agentRes = await api('/api/v1/agents/' + agentType);
+      if (!agentRes.ok) { flashMsg('error', agentRes.body.error || 'Could not load agent'); return; }
+      const user = me.body.user;
+      const agent = agentRes.body.agent;
+      if (!user.email_verified) {
+        flashMsg('error', 'Verify your email before publishing.');
+        return;
+      }
+      if (!agent.profile_complete) {
+        flashMsg('error', agentType === 'jobseeker'
+          ? 'Upload a resume or document first.'
+          : 'Upload a document or save your profile (specialty + services) first.');
+        return;
+      }
+      setLoading(btn, true, 'Generating…');
+      try {
+        const res = await api('/api/v1/agents/' + agentType + '/publish', { method: 'POST' });
+        if (!res.ok) { flashMsg('error', res.body.error || 'Publish failed'); return; }
+        flashMsg('ok', 'Link ready: ' + res.body.agent.link);
+        await loadPage();
+      } finally {
+        setLoading(btn, false);
+      }
+    }
+
+    async function loadPage() {
+      const types = await api('/api/v1/agent-types');
+      const info = (types.body.types || []).find(t => t.id === agentType);
+      if (!info) { window.location.href = '/dashboard'; return; }
+      document.getElementById('page-title').textContent = info.title + ' agent';
+      document.getElementById('page-desc').textContent = info.description + ' Visitors: ' + info.visitor_label + '.';
+      document.title = info.title + ' — AgentList';
+
+      const me = await api('/api/v1/me');
+      if (me.status === 401) { window.location.href = '/login'; return; }
+      const user = me.body.user;
+
+      if (agentType === 'jobseeker') {
+        document.getElementById('jobseeker-panel').hidden = false;
+        document.getElementById('jobseeker-extras').hidden = false;
+        document.getElementById('extra-documents-panel').hidden = false;
+        hasResume = me.body.resume && me.body.resume.uploaded;
+        if (hasResume) {
+          document.getElementById('resume-status').textContent = 'Uploaded: ' + (me.body.resume.filename || 'resume');
+        }
+        await loadApprovals();
+        await loadSessions();
+      } else {
+        document.getElementById('primary-doc-panel').hidden = false;
+        document.getElementById('profile-panel').hidden = false;
+      }
+
+      const res = await ensureAgent();
+      if (!res.ok) { flashMsg('error', res.body.error || 'Could not load agent'); return; }
+      const agent = res.body.agent;
+      renderAgent(agent);
+      if (agent.fields) renderProfile(agent.fields, agent.profile || {});
+      renderDocumentStatus(agent);
+      await loadDocuments();
+
+      updatePublishState(user, agent);
+    }
+
+    document.getElementById('primary-doc-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fileInput = document.getElementById('primary-doc');
+      const btn = e.target.querySelector('button[type=submit]');
+      if (!fileInput.files.length) { flashMsg('error', 'Choose a file first'); return; }
+      const ok = await uploadDocument(fileInput.files[0], btn, 'Document uploaded — you can now generate an agent link.');
+      if (ok) fileInput.value = '';
+    });
+
+    document.getElementById('document-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fileInput = document.getElementById('document');
+      const btn = e.target.querySelector('button[type=submit]');
+      if (!fileInput.files.length) { flashMsg('error', 'Choose a file first'); return; }
+      const ok = await uploadDocument(fileInput.files[0], btn, 'Additional document uploaded');
+      if (ok) fileInput.value = '';
+    });
+
+    document.getElementById('resume-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fileInput = document.getElementById('resume');
+      const btn = e.target.querySelector('button[type=submit]');
+      if (!fileInput.files.length) { flashMsg('error', 'Choose a file first'); return; }
+      setLoading(btn, true, 'Uploading…');
+      try {
+        const fd = new FormData();
+        fd.append('resume', fileInput.files[0]);
+        const res = await fetch('/api/v1/resume', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) { flashMsg('ok', 'Resume uploaded — you can now generate an agent link.'); await loadPage(); return; }
+        flashMsg('error', body.error || 'Upload failed');
+      } finally {
+        setLoading(btn, false);
+      }
+    });
+
+    document.getElementById('save-profile').addEventListener('click', async () => {
+      const btn = document.getElementById('save-profile');
+      setLoading(btn, true, 'Saving…');
+      try {
+        const data = Object.fromEntries(new FormData(document.getElementById('profile-form')).entries());
+        const res = await api('/api/v1/agents/' + agentType + '/profile', { method: 'PUT', body: JSON.stringify(data) });
+        if (!res.ok) { flashMsg('error', res.body.error || 'Save failed'); return; }
+        flashMsg('ok', 'Profile saved — you can now generate an agent link.');
+        await loadPage();
+      } finally {
+        setLoading(btn, false);
+      }
+    });
+
+    document.getElementById('publish').addEventListener('click', tryPublish);
+
+    loadPage();
+  </script>
+</body>
+</html>

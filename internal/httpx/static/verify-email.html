@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Verify email — AgentList</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="auth-page">
+  <nav class="topnav">
+    <a class="brand" href="/">AgentList</a>
+  </nav>
+
+  <main class="auth-center">
+    <section class="auth-card">
+      <div class="auth-card-header">
+        <h1>Verify email</h1>
+        <p class="subtitle" id="status">Verifying your address…</p>
+      </div>
+      <div class="auth-card-body">
+        <div id="msg" class="msg" hidden></div>
+        <div class="actions" id="actions" hidden>
+          <a class="btn full" href="/login">Log in</a>
+          <a class="btn secondary full" href="/dashboard">Dashboard</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    (async () => {
+      const token = new URLSearchParams(window.location.search).get('token');
+      if (!token) {
+        document.getElementById('status').textContent = 'Invalid link';
+        showMsg('msg', 'error', 'Missing verification token.');
+        return;
+      }
+      const res = await api('/api/v1/auth/verify?token=' + encodeURIComponent(token));
+      if (res.ok) {
+        document.getElementById('status').textContent = 'Verified — ' + res.body.user.email;
+        showMsg('msg', 'ok', res.body.message);
+        document.getElementById('actions').hidden = false;
+        return;
+      }
+      document.getElementById('status').textContent = 'Verification failed';
+      showMsg('msg', 'error', res.body.error || 'Invalid or expired link.');
+    })();
+  </script>
+</body>
+</html>

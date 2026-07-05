@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard — AgentList</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="page">
+  <div class="dashboard-wrap">
+    <nav class="topnav">
+      <a class="brand" href="/">AgentList</a>
+      <button id="logout" class="secondary" type="button">Log out</button>
+    </nav>
+
+    <section class="card">
+      <h1>Your agents</h1>
+      <p id="status" class="muted">Choose an agent type to create and publish your AI representative.</p>
+
+      <div id="agent-tiles" class="agent-tiles"></div>
+
+      <div class="inner-card" style="margin-top: 1.5rem">
+        <h3>Account</h3>
+        <p>Email: <span id="email" class="mono">—</span></p>
+        <p id="google-linked" class="muted small" hidden>Signed in with Google</p>
+        <p>Status: <span id="verified" class="badge warn">—</span></p>
+      </div>
+
+      <div id="msg" class="msg" hidden></div>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    async function loadDashboard() {
+      const me = await api('/api/v1/me');
+      if (me.status === 401) { window.location.href = '/login'; return; }
+      if (!me.ok) { showMsg('msg', 'error', me.body.error || 'Failed to load'); return; }
+
+      const { user } = me.body;
+      document.getElementById('email').textContent = user.email;
+      document.getElementById('google-linked').hidden = !user.google_linked;
+      const verified = document.getElementById('verified');
+      verified.textContent = user.email_verified ? 'verified' : 'pending';
+      verified.className = 'badge ' + (user.email_verified ? 'ok' : 'warn');
+
+      const res = await api('/api/v1/agents');
+      if (!res.ok) { showMsg('msg', 'error', res.body.error || 'Failed to load agents'); return; }
+
+      const tiles = document.getElementById('agent-tiles');
+      tiles.innerHTML = '';
+      for (const a of res.body.agents) {
+        const el = document.createElement('a');
+        el.className = 'agent-tile';
+        el.href = '/agents/' + a.type;
+
+        let badge = 'Not started';
+        let badgeClass = 'muted';
+        if (a.created) {
+          if (a.link) { badge = 'Live'; badgeClass = 'ok'; }
+          else if (a.profile_complete) { badge = 'Ready to publish'; badgeClass = 'warn'; }
+          else { badge = 'Setup needed'; badgeClass = 'warn'; }
+        }
+
+        el.innerHTML = `
+          <span class="agent-tile-icon">${a.icon || '🤖'}</span>
+          <h3>${a.title}</h3>
+          <p class="muted small">${a.description}</p>
+          <span class="badge ${badgeClass}">${badge}</span>`;
+        tiles.appendChild(el);
+      }
+    }
+
+    document.getElementById('logout').addEventListener('click', async () => {
+      await api('/api/v1/auth/logout', { method: 'POST' });
+      window.location.href = '/login';
+    });
+    loadDashboard();
+  </script>
+</body>
+</html>

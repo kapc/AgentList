@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Screening agent — AgentList</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="page agent-page">
+  <div class="agent-wrap">
+    <nav class="topnav">
+      <a class="brand" href="/">AgentList</a>
+      <span id="agent-badge" class="badge warn">Agent</span>
+    </nav>
+
+    <section class="card agent-card">
+      <h1 id="agent-title">Agent</h1>
+      <p id="intro" class="muted">Loading agent…</p>
+      <p id="disclaimer" class="disclaimer"></p>
+
+      <div id="token-meter" class="token-meter" hidden>
+        <div class="token-meter-header">
+          <span class="token-meter-title">Session token budget</span>
+          <span id="token-label" class="token-meter-label mono">0 / 0</span>
+        </div>
+        <div id="token-bar" class="token-meter-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="token-fill" class="token-meter-fill"></div>
+        </div>
+        <p id="token-hint" class="token-meter-hint muted small"></p>
+      </div>
+
+      <div id="chat" class="chat-log" aria-live="polite"></div>
+
+      <form id="chat-form" class="chat-form">
+        <input id="message" type="text" placeholder="Ask about experience, skills, projects…" autocomplete="off" required />
+        <button type="submit" id="send-btn">Send</button>
+      </form>
+
+      <div id="connection-panel" class="connection-panel" hidden>
+        <h3>Request intro call</h3>
+        <p id="connection-status" class="muted small"></p>
+        <form id="connection-form" class="connection-form">
+          <label for="recruiter-company">Company *</label>
+          <input id="recruiter-company" type="text" required placeholder="Acme Corp" />
+          <label for="recruiter-name">Your name</label>
+          <input id="recruiter-name" type="text" placeholder="Jane Recruiter" />
+          <label for="recruiter-email">Your email</label>
+          <input id="recruiter-email" type="email" placeholder="you@company.com" />
+          <label for="recruiter-note">Note for the candidate</label>
+          <textarea id="recruiter-note" rows="2" placeholder="We'd like a 30-min intro to discuss a senior role…"></textarea>
+          <button type="submit" id="connection-submit">Request intro call</button>
+        </form>
+        <div id="connection-approved" class="connection-approved" hidden>
+          <p class="badge ok">Approved by candidate</p>
+          <p class="muted small">Calendar scheduling is coming soon. If you provided an email, you'll receive a confirmation.</p>
+        </div>
+      </div>
+
+      <div id="msg" class="msg" hidden></div>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const slug = window.location.pathname.replace(/^\/a\//, '').replace(/\/$/, '');
+    const accessToken = new URLSearchParams(window.location.search).get('token') || '';
+    let sessionId = sessionStorage.getItem('agentlist_session_' + slug) || '';
+    let tokenLimit = 0;
+
+    let agentKind = 'jobseeker';
+
+    function applyAgentMeta(info) {
+      agentKind = info.type || 'jobseeker';
+      document.getElementById('agent-title').textContent = (info.title || 'Agent') + ' agent';
+      document.title = (info.title || 'Agent') + ' — AgentList';
+      document.getElementById('disclaimer').textContent = info.disclaimer || '';
+      const badge = document.getElementById('agent-badge');
+      if (agentKind === 'jobseeker') {
+        badge.textContent = 'Blind screening';
+        badge.className = 'badge warn';
+      } else if (agentKind === 'doctor') {
+        badge.textContent = 'Practice info';
+        badge.className = 'badge warn';
+      } else {
+        badge.textContent = info.title || 'Agent';
+        badge.className = 'badge ok';
+      }
+      const input = document.getElementById('message');
+      if (agentKind === 'doctor') {
+        input.placeholder = 'Ask about specialties, services, fees, hours…';
+      } else if (agentKind === 'gardener') {
+        input.placeholder = 'Ask about services, pricing, availability…';
+      } else if (agentKind === 'recruiter') {
+        input.placeholder = 'Ask about open roles, company, hiring process…';
+      } else {
+        input.placeholder = 'Ask about experience, skills, projects…';
+      }
+    }
+
+    function publicAgentURL(path, extraQuery) {
+      const params = new URLSearchParams();
+      if (accessToken) params.set('token', accessToken);
+      if (extraQuery) {
+        for (const [k, v] of Object.entries(extraQuery)) {
+          if (v) params.set(k, v);
+        }
+      }
+      const q = params.toString();
+      return '/api/v1/public/agents/' + encodeURIComponent(slug) + path + (q ? '?' + q : '');
+    }
+
+    function formatTokens(n) {
+      return Number(n || 0).toLocaleString();
+    }
+
+    function updateTokenMeter(used, limit, remaining) {
+      const meter = document.getElementById('token-meter');
+      const fill = document.getElementById('token-fill');
+      const bar = document.getElementById('token-bar');
+      const label = document.getElementById('token-label');
+      const hint = document.getElementById('token-hint');
+      const form = document.getElementById('chat-form');
+      const sendBtn = document.getElementById('send-btn');
+
+      if (!limit) {
+        meter.hidden = true;
+        return;
+      }
+
+      meter.hidden = false;
+      const pct = Math.min(100, Math.round((used / limit) * 100));
+      label.textContent = formatTokens(used) + ' / ' + formatTokens(limit) + ' tokens used';
+      fill.style.width = pct + '%';
+      bar.setAttribute('aria-valuemax', String(limit));
+      bar.setAttribute('aria-valuenow', String(used));
+
+      fill.classList.remove('warn', 'danger');
+      if (remaining === 0) fill.classList.add('danger');
+      else if (pct >= 80) fill.classList.add('warn');
+
+      if (remaining === 0) {
+        hint.textContent = 'Session token limit reached. You cannot send more messages in this session.';
+        form.hidden = true;
+      } else if (pct >= 80) {
+        hint.textContent = formatTokens(remaining) + ' tokens remaining — you are approaching the session limit.';
+        form.hidden = false;
+        sendBtn.disabled = false;
+      } else {
+        hint.textContent = formatTokens(remaining) + ' tokens remaining in this session.';
+        form.hidden = false;
+        sendBtn.disabled = false;
+      }
+    }
+
+    async function loadSessionUsage() {
+      if (!sessionId || !accessToken) {
+        updateTokenMeter(0, tokenLimit, tokenLimit);
+        return;
+      }
+      const res = await api(publicAgentURL('/session', { session_id: sessionId }));
+      if (!res.ok) {
+        // Stale session from before a reset — start fresh on next message.
+        sessionId = '';
+        sessionStorage.removeItem('agentlist_session_' + slug);
+        return;
+      }
+      updateTokenMeter(res.body.tokens_used, res.body.token_limit, res.body.tokens_remaining);
+      if (res.body.limit_reached) {
+        document.getElementById('chat-form').hidden = true;
+      }
+    }
+
+    function appendMessage(role, text) {
+      const el = document.createElement('div');
+      el.className = 'chat-bubble ' + role;
+      el.textContent = text;
+      document.getElementById('chat').appendChild(el);
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    function renderConnection(req) {
+      const panel = document.getElementById('connection-panel');
+      const form = document.getElementById('connection-form');
+      const approved = document.getElementById('connection-approved');
+      const status = document.getElementById('connection-status');
+      panel.hidden = false;
+
+      if (!req) {
+        form.hidden = false;
+        approved.hidden = true;
+        status.textContent = 'After screening, request an intro call. The candidate must approve before scheduling.';
+        return;
+      }
+
+      form.hidden = true;
+      approved.hidden = true;
+
+      if (req.status === 'pending') {
+        status.textContent = 'Intro request pending — waiting for the candidate to approve.';
+      } else if (req.status === 'approved') {
+        status.textContent = 'The candidate approved your intro request.';
+        approved.hidden = false;
+      } else if (req.status === 'declined') {
+        status.textContent = 'The candidate declined an intro call for this session.';
+      } else if (req.status === 'expired') {
+        status.textContent = 'The intro request expired before the candidate responded.';
+      } else {
+        status.textContent = 'Connection request: ' + req.status;
+      }
+    }
+
+    async function loadConnectionRequest() {
+      if (!sessionId || !accessToken) return;
+      const res = await api(publicAgentURL('/connection-request', { session_id: sessionId }));
+      if (!res.ok) return;
+      renderConnection(res.body.connection_request);
+    }
+
+    async function loadAgent() {
+      if (!accessToken) {
+        document.getElementById('intro').textContent = 'This agent link is invalid or has expired.';
+        document.getElementById('chat-form').hidden = true;
+        return;
+      }
+      const res = await api(publicAgentURL(''));
+      if (!res.ok) {
+        document.getElementById('intro').textContent = res.status === 410
+          ? 'This agent link has expired.'
+          : 'This agent is not available.';
+        document.getElementById('chat-form').hidden = true;
+        return;
+      }
+      document.getElementById('intro').textContent = res.body.intro;
+      applyAgentMeta(res.body);
+      tokenLimit = res.body.token_limit || 0;
+      updateTokenMeter(0, tokenLimit, tokenLimit);
+      await loadSessionUsage();
+      await loadConnectionRequest();
+      appendMessage('assistant', res.body.intro);
+    }
+
+    document.getElementById('connection-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!sessionId) {
+        showMsg('msg', 'error', 'Send at least one message before requesting an intro.');
+        return;
+      }
+      const btn = document.getElementById('connection-submit');
+      btn.disabled = true;
+      const res = await api(publicAgentURL('/connection-request'), {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: sessionId,
+          recruiter_company: document.getElementById('recruiter-company').value.trim(),
+          recruiter_name: document.getElementById('recruiter-name').value.trim(),
+          recruiter_email: document.getElementById('recruiter-email').value.trim(),
+          recruiter_note: document.getElementById('recruiter-note').value.trim(),
+        }),
+      });
+      btn.disabled = false;
+      if (!res.ok) {
+        showMsg('msg', 'error', res.body.error || 'Request failed');
+        return;
+      }
+      showMsg('msg', 'ok', res.body.message || 'Request sent');
+      renderConnection(res.body.connection_request);
+    });
+
+    document.getElementById('chat-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('message');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const btn = document.getElementById('send-btn');
+      btn.disabled = true;
+      appendMessage('user', text);
+      input.value = '';
+
+      const res = await api(publicAgentURL('/chat'), {
+        method: 'POST',
+        body: JSON.stringify({ session_id: sessionId, message: text }),
+      });
+
+      btn.disabled = false;
+      if (!res.ok) {
+        if (res.status === 429) {
+          updateTokenMeter(tokenLimit, tokenLimit, 0);
+        }
+        if (res.status === 410) {
+          showMsg('msg', 'error', 'This agent link has expired — ask the owner to generate a new one.');
+          document.getElementById('chat-form').hidden = true;
+          return;
+        }
+        if (res.status === 403 && res.body.error && res.body.error.includes('token limit')) {
+          updateTokenMeter(tokenLimit, tokenLimit, 0);
+        }
+        showMsg('msg', 'error', res.body.error || 'Message failed');
+        return;
+      }
+
+      sessionId = res.body.session_id;
+      sessionStorage.setItem('agentlist_session_' + slug, sessionId);
+      appendMessage('assistant', res.body.reply);
+
+      if (typeof res.body.token_limit === 'number') tokenLimit = res.body.token_limit;
+      updateTokenMeter(res.body.tokens_used, tokenLimit, res.body.tokens_remaining);
+      if (agentKind === 'jobseeker') {
+        document.getElementById('connection-panel').hidden = false;
+        await loadConnectionRequest();
+      }
+    });
+
+    loadAgent();
+  </script>
+</body>
+</html>
