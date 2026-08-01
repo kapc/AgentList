@@ -62,7 +62,7 @@ func main() {
 		log.Printf("OPENAI_API_KEY not set — agent chat will return 503 until configured")
 	}
 	if cfg.TwilioVoiceEnabled() {
-		log.Printf("Twilio voice enabled — configure phone webhook URLs in agent setup")
+		log.Printf("Twilio voice enabled — language %s (configure phone webhook URLs in agent setup)", cfg.VoiceLanguage)
 	} else {
 		log.Printf("Twilio voice disabled — set TWILIO_AUTH_TOKEN in .env to enable phone agents")
 	}

@@ -70,7 +70,7 @@
         <p class="muted small">Connect your Google Calendar so visitors can find open appointment times in chat and book directly onto your calendar.</p>
         <p id="calendar-status" class="muted">Checking connection…</p>
         <div class="actions" style="margin-top: 0.75rem; justify-content: flex-start">
-          <a id="calendar-connect" class="btn btn-google" href="#" hidden>Connect Google Calendar</a>
+          <a id="calendar-connect" class="btn btn-google" href="/api/v1/agents/doctor/calendar/connect">Connect Google Calendar</a>
           <button id="calendar-disconnect" type="button" class="secondary" hidden>Disconnect</button>
         </div>
       </div>
@@ -356,29 +356,38 @@
       const status = document.getElementById('calendar-status');
       const connect = document.getElementById('calendar-connect');
       const disconnect = document.getElementById('calendar-disconnect');
+      const connectURL = '/api/v1/agents/' + agentType + '/calendar/connect';
+      connect.href = connectURL;
+      connect.onclick = function (e) {
+        e.preventDefault();
+        window.location.assign(connectURL);
+      };
       const res = await api('/api/v1/agents/' + agentType + '/calendar/status');
       if (!res.ok) {
         status.textContent = 'Could not load calendar status.';
+        connect.hidden = false;
+        connect.textContent = 'Connect Google Calendar';
         return;
       }
       if (res.body.connected) {
         if (res.body.healthy === false) {
-          status.textContent = res.body.message || 'Calendar connected but missing permissions — disconnect and reconnect Google Calendar.';
+          status.textContent = res.body.message || 'Calendar connected but missing permissions — reconnect Google Calendar.';
           status.className = 'msg error';
           connect.hidden = false;
           connect.textContent = 'Reconnect Google Calendar';
-          connect.href = '/api/v1/agents/' + agentType + '/calendar/connect';
           disconnect.hidden = false;
         } else {
-          status.textContent = 'Connected to Google Calendar (' + (res.body.calendar_id || 'primary') + '). Appointments booked in chat appear on your calendar.';
+          status.textContent = 'Connected to Google Calendar (' + (res.body.calendar_id || 'primary') + '). Phone and chat can book appointments.';
           status.className = 'muted';
-          connect.hidden = true;
+          connect.hidden = false;
+          connect.textContent = 'Reconnect Google Calendar';
           disconnect.hidden = false;
         }
       } else {
         status.textContent = 'Not connected — visitors cannot book appointments until you connect your calendar.';
+        status.className = 'muted';
         connect.hidden = false;
-        connect.href = '/api/v1/agents/' + agentType + '/calendar/connect';
+        connect.textContent = 'Connect Google Calendar';
         disconnect.hidden = true;
       }
     }
@@ -402,11 +411,14 @@
         status.textContent = 'Publish your agent first, then return here for the Twilio webhook URL.';
         return;
       }
-      status.textContent = 'Ready — configure Twilio with the webhook below.';
+      status.textContent = 'Ready — configure Twilio with the webhook below.' +
+        (res.body.language ? ' Voice language: ' + res.body.language + '.' : '');
       webhook.hidden = false;
       webhook.textContent = res.body.webhook_url;
       hint.hidden = false;
       hint.textContent = (res.body.message || '') +
+        ' Use HTTP POST (not GET). Opening the URL in a browser will not start a call — dial your Twilio number instead.' +
+        (res.body.language === 'gu-IN' ? ' Speaking Gujarati (set VOICE_LANGUAGE=en-US in .env to switch back).' : '') +
         (res.body.token_expires_at ? ' Link token expires ' + new Date(res.body.token_expires_at).toLocaleString() + ' — regenerate agent link to refresh.' : '');
     }
 

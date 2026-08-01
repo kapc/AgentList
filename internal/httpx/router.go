@@ -48,6 +48,8 @@ func NewRouter(h *Handler, tokens *auth.TokenManager, st *store.Store) http.Hand
 		r.Post("/public/agents/{slug}/connection-request", h.PublicCreateConnectionRequest)
 		r.Post("/public/agents/{slug}/chat", h.AgentChat)
 
+		r.Get("/voice/agents/{slug}/incoming", h.VoiceIncomingProbe)
+		r.Head("/voice/agents/{slug}/incoming", h.VoiceIncomingProbe)
 		r.Post("/voice/agents/{slug}/incoming", h.VoiceIncoming)
 		r.Post("/voice/agents/{slug}/gather", h.VoiceGather)
 

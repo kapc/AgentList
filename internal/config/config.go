@@ -27,6 +27,8 @@ type Config struct {
 	ResumeStorageDir     string
 	TwilioAuthToken      string
 	TwilioSkipSignature  bool
+	VoiceLanguage        string // e.g. en-US, gu-IN
+	VoiceSayVoice        string // e.g. Polly.Joanna, Google.gu-IN-Wavenet-A
 }
 
 func (c Config) TwilioVoiceEnabled() bool {
@@ -68,6 +70,8 @@ func Load() Config {
 		ResumeStorageDir:      env("RESUME_STORAGE_DIR", "./data/resumes"),
 		TwilioAuthToken:       env("TWILIO_AUTH_TOKEN", ""),
 		TwilioSkipSignature:   env("TWILIO_SKIP_SIGNATURE", "false") == "true",
+		VoiceLanguage:         env("VOICE_LANGUAGE", "en-US"),
+		VoiceSayVoice:         env("VOICE_SAY_VOICE", ""),
 	}
 }
 

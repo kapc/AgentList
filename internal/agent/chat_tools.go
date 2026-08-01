@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,7 +94,10 @@ func appointmentTools() []openAITool {
 	bookParams := json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"slot_id": { "type": "string", "description": "ID of the appointment slot to book" },
+			"slot_id": {
+				"type": "string",
+				"description": "Exact slot id from search_appointment_slots results (RFC3339 timestamp like 2026-08-03T10:00:00Z). If the user picks option N, you may pass N as a string (e.g. \"1\") and the system will resolve it."
+			},
 			"patient_name": { "type": "string", "description": "Patient or client full name" },
 			"patient_email": { "type": "string", "description": "Email for confirmation (optional but recommended)" },
 			"patient_phone": { "type": "string", "description": "Phone number (optional)" }
@@ -104,7 +109,7 @@ func appointmentTools() []openAITool {
 			Type: "function",
 			Function: openAIToolFunc{
 				Name:        "search_appointment_slots",
-				Description: "Find the earliest available appointment slots. Use when the user asks about availability, open times, or wants to book.",
+				Description: "Find the earliest available appointment slots. Use when the user asks about availability, open times, or wants to book. Always call this before booking if you do not have fresh slot ids.",
 				Parameters:  searchParams,
 			},
 		},
@@ -112,7 +117,7 @@ func appointmentTools() []openAITool {
 			Type: "function",
 			Function: openAIToolFunc{
 				Name:        "book_appointment_slot",
-				Description: "Book a specific appointment slot after the user chooses one and provides their name.",
+				Description: "Book a specific appointment slot after the user chooses one and provides their name. Prefer the exact id field from search_appointment_slots.",
 				Parameters:  bookParams,
 			},
 		},
@@ -123,18 +128,18 @@ func (s *Service) generateReplyWithTools(
 	ctx context.Context,
 	agentID, agentType, sessionID, experience string,
 	history []store.ChatMessage,
-	latest string,
+	latest, replyLanguage string,
 	extras *chatExtras,
 ) (string, int, error) {
 	if s.cfg.OpenAIAPIKey == "" {
 		return "", 0, ErrLLMNotConfigured
 	}
 	if s.appointments == nil || !s.appointments.SupportsScheduling(agentType) {
-		return s.generateReply(ctx, agentType, experience, history, latest)
+		return s.generateReply(ctx, agentType, experience, history, latest, replyLanguage)
 	}
 
 	msgs := []openAIMessage{
-		{Role: "system", Content: strPtr(systemPrompt(agentType, experience))},
+		{Role: "system", Content: strPtr(systemPrompt(agentType, experience, replyLanguage))},
 	}
 	for _, m := range history {
 		if m.Role != "user" && m.Role != "assistant" {
@@ -256,8 +261,12 @@ func (s *Service) runAppointmentTool(
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return "", err
 		}
+		slotID, err := s.resolveSlotID(ctx, agentID, agentType, args.SlotID, extras)
+		if err != nil {
+			return appointmentToolError(err), nil
+		}
 		appt, slot, err := s.appointments.Book(ctx, agentID, appointments.BookInput{
-			SlotID:       args.SlotID,
+			SlotID:       slotID,
 			SessionID:    sessionID,
 			PatientName:  args.PatientName,
 			PatientEmail: args.PatientEmail,
@@ -265,21 +274,76 @@ func (s *Service) runAppointmentTool(
 			AgentType:    agentType,
 		})
 		if err != nil {
+			log.Printf("book_appointment_slot failed agent=%s slot=%q resolved=%q: %v", agentID, args.SlotID, slotID, err)
 			return appointmentToolError(err), nil
 		}
 		extras.booked = &appt
 		extras.bookedSlot = &slot
 		b, err := json.Marshal(map[string]any{
-			"booked": true,
+			"booked":         true,
 			"appointment_id": appt.ID,
-			"slot_id": slot.ID,
-			"label": formatSlotLabel(slot),
-			"patient_name": appt.PatientName,
+			"slot_id":        slot.ID,
+			"label":          formatSlotLabel(slot),
+			"patient_name":   appt.PatientName,
 		})
 		return string(b), err
 	default:
 		return jsonError("unknown tool: " + call.Function.Name), nil
 	}
+}
+
+// resolveSlotID maps LLM-provided slot references (option numbers, labels, or RFC3339 ids)
+// onto a real searchable slot id.
+func (s *Service) resolveSlotID(ctx context.Context, agentID, agentType, raw string, extras *chatExtras) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", calendar.ErrInvalidSlotID
+	}
+	if _, err := time.Parse(time.RFC3339, raw); err == nil {
+		return raw, nil
+	}
+
+	slots := extras.appointments
+	if len(slots) == 0 {
+		found, err := s.appointments.SearchEarliest(ctx, agentID, agentType, 10)
+		if err != nil {
+			return "", err
+		}
+		slots = found
+		extras.appointments = found
+	}
+	if len(slots) == 0 {
+		return "", calendar.ErrInvalidSlotID
+	}
+
+	// Option number: "1", "2", "option 3", "#2"
+	digits := raw
+	lower := strings.ToLower(raw)
+	for _, prefix := range []string{"option ", "slot ", "#"} {
+		if strings.HasPrefix(lower, prefix) {
+			digits = strings.TrimSpace(raw[len(prefix):])
+			break
+		}
+	}
+	if n, err := strconv.Atoi(digits); err == nil && n >= 1 && n <= len(slots) {
+		return slots[n-1].ID, nil
+	}
+
+	// Match against label or starts_at text.
+	for _, slot := range slots {
+		label := formatSlotLabel(slot)
+		if strings.EqualFold(raw, label) || strings.Contains(strings.ToLower(label), strings.ToLower(raw)) {
+			return slot.ID, nil
+		}
+		if strings.Contains(raw, slot.StartsAt.UTC().Format(time.RFC3339)) {
+			return slot.ID, nil
+		}
+		// "10:00 AM" style fragment
+		if strings.Contains(raw, slot.StartsAt.UTC().Format("3:04 PM")) {
+			return slot.ID, nil
+		}
+	}
+	return "", calendar.ErrInvalidSlotID
 }
 
 func appointmentToolError(err error) string {
@@ -288,6 +352,10 @@ func appointmentToolError(err error) string {
 		return jsonError("calendar_not_connected: the practice owner has not connected Google Calendar yet")
 	case errors.Is(err, calendar.ErrScopeMissing):
 		return jsonError("calendar_scope_missing: reconnect Google Calendar in agent setup to enable booking")
+	case errors.Is(err, calendar.ErrInvalidSlotID):
+		return jsonError("invalid_slot_id: call search_appointment_slots again and pass the exact id field (or option number 1-N) from those results")
+	case errors.Is(err, calendar.ErrSlotUnavailable):
+		return jsonError("slot_unavailable: that time was just taken — search again for new slots")
 	default:
 		return jsonError(err.Error())
 	}

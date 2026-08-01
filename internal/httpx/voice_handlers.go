@@ -42,6 +42,8 @@ func (h *Handler) VoiceConfig(w http.ResponseWriter, r *http.Request) {
 		"enabled":   h.voice.Enabled(),
 		"published": agent.Published,
 		"slug":      agent.Slug,
+		"language":  h.voice.Locale().Language,
+		"say_voice": h.voice.Locale().SayVoice,
 	}
 	if !h.voice.Enabled() {
 		resp["message"] = "Set TWILIO_AUTH_TOKEN in .env and point a Twilio phone number at the webhook URL below."
@@ -60,6 +62,29 @@ func (h *Handler) VoiceConfig(w http.ResponseWriter, r *http.Request) {
 	resp["token_expires_at"] = link.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z")
 	resp["message"] = "In Twilio Console, set your phone number's Voice webhook to POST this URL. Use ngrok for local dev."
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// VoiceIncomingProbe answers Twilio/browser GET/HEAD URL checks (calls use POST).
+func (h *Handler) VoiceIncomingProbe(w http.ResponseWriter, r *http.Request) {
+	if !h.voice.Enabled() {
+		http.Error(w, "phone agents not configured", http.StatusServiceUnavailable)
+		return
+	}
+	slug := chi.URLParam(r, "slug")
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" {
+		http.Error(w, "missing token", http.StatusBadRequest)
+		return
+	}
+	if _, err := h.store.AgentBySlugAndAccessToken(r.Context(), slug, token); err != nil {
+		http.Error(w, "invalid agent link", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write([]byte("OK — Twilio voice webhook ready. Configure this URL as HTTP POST in Twilio, then call your Twilio number (do not open in a browser)."))
+	}
 }
 
 func (h *Handler) VoiceIncoming(w http.ResponseWriter, r *http.Request) {
